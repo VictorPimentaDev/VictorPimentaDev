@@ -1,6 +1,6 @@
 - 👋 Hi, I’m @VictorPimentaDev
 
-- ⚡ Fun fact: i have a dog an multiple plants
+- ⚡ Fun fact: i have a dog and multiple plants
 
 <!---
 VictorPimentaDev/VictorPimentaDev is a ✨ special ✨ repository because its `README.md` (this file) appears on your GitHub profile.
