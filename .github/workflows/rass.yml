@@ -20,6 +20,6 @@ jobs:
 
           git config user.name “Victor Pimenta“
           git config user.email “viktorpimenta2705@gmail.com”
-          git add simulated-commits/*
+          git add *
           git commit -m "🔄 Commit multilinguagem em $(date)"
           git push
