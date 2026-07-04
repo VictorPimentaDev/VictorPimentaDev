@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""Growing-snake contribution animation.
+"""Snake-game contribution animation.
 
-Generates an animated SVG where the snake sweeps the contribution grid
-and GROWS one segment each time it eats a contribution (like the real
-snake game). Dark theme (GitHub dark palette). Stdlib only.
+The snake chases the nearest contribution (BFS pathfinding, so the route
+looks organic instead of a row sweep), eats it head-first with a burst
+effect, and grows a segment per meal up to a small cap. Dark theme,
+stdlib only.
 
 Usage: GITHUB_TOKEN=... python3 generate_snake.py <github_user> <output.svg>
 """
 import json
 import os
+import random
 import sys
 import urllib.request
+from collections import deque
 
 # --- layout ---
 CELL = 12          # cell size
 GAP = 3            # gap between cells
 PITCH = CELL + GAP
 PAD = 10           # canvas padding
-STEP_S = 0.09      # seconds per cell
-END_PAUSE_S = 1.5  # pause before the loop restarts
-MIN_LEN = 4        # starting snake length (head included)
-MAX_LEN = 36       # cap so a heavy year doesn't fill the whole grid
+STEP_S = 0.16      # seconds per cell, unhurried on purpose
+END_PAUSE_S = 2.0  # pause before the loop restarts
+MIN_LEN = 3        # starting snake length (head included)
+MAX_LEN = 7        # she stays a comfortable size
 
 # --- GitHub dark palette ---
 BG = "#0d1117"
@@ -52,7 +55,6 @@ def fetch_grid(login, token):
     with urllib.request.urlopen(req) as resp:
         data = json.load(resp)
     weeks = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]["weeks"]
-    # grid[col][row] = contribution count
     grid = []
     for w in weeks:
         col = [0] * 7
@@ -74,6 +76,48 @@ def level(count):
     return 4
 
 
+def bfs_path(ncols, start, goals):
+    """Shortest path from start to the nearest goal, with shuffled neighbour
+    order so the route bends organically instead of tracing an L."""
+    prev = {start: None}
+    queue = deque([start])
+    while queue:
+        cur = queue.popleft()
+        if cur in goals:
+            path = []
+            while cur != start:
+                path.append(cur)
+                cur = prev[cur]
+            return path[::-1]
+        c, r = cur
+        neigh = [(c + 1, r), (c - 1, r), (c, r + 1), (c, r - 1)]
+        random.shuffle(neigh)
+        for n in neigh:
+            if 0 <= n[0] < ncols and 0 <= n[1] < 7 and n not in prev:
+                prev[n] = cur
+                queue.append(n)
+    return []
+
+
+def build_path(grid, ncols):
+    """Greedy chase: keep routing to the nearest uneaten contribution.
+    Returns (path_cells, eat_steps) where eat_steps maps cell -> step index."""
+    foods = {(c, r) for c in range(ncols) for r in range(7) if grid[c][r] > 0}
+    start = (0, 0)
+    path = [start]
+    eats = {}
+    if start in foods:
+        foods.discard(start)
+        eats[start] = 0
+    while foods:
+        for cell in bfs_path(ncols, path[-1], foods):
+            path.append(cell)
+            if cell in foods:
+                foods.discard(cell)
+                eats[cell] = len(path) - 1
+    return path, eats
+
+
 def cell_center(col, row):
     return (PAD + col * PITCH + CELL / 2, PAD + row * PITCH + CELL / 2)
 
@@ -86,37 +130,26 @@ def main():
     grid = fetch_grid(login, token)
     ncols = len(grid)
 
-    # boustrophedon path: sweep each row, alternating direction
-    path_cells = []
-    for row in range(7):
-        cols = range(ncols) if row % 2 == 0 else range(ncols - 1, -1, -1)
-        path_cells.extend((c, row) for c in cols)
-
+    path_cells, eat_steps = build_path(grid, ncols)
     n = len(path_cells)
     move_dur = n * STEP_S
     total = move_dur + END_PAUSE_S
     move_frac = move_dur / total
 
-    # eat events: path index of every non-empty cell, in visit order
-    eats = [i for i, (c, r) in enumerate(path_cells) if grid[c][r] > 0]
-    growth = max(0, min(MAX_LEN, MIN_LEN + len(eats)) - MIN_LEN)
-    eats_per_growth = max(1, -(-len(eats) // growth)) if growth else 1
-
-    # spawn step for each segment (head=0). Base segments trail in as the
-    # snake enters; grown segment k spawns when eat #(k*eats_per_growth) happens.
-    length = MIN_LEN + growth
-    spawn = {}
-    for i in range(length):
-        if i < MIN_LEN:
-            spawn[i] = i  # visible once the head is i steps in
-        else:
-            eat_idx = min((i - MIN_LEN + 1) * eats_per_growth, len(eats)) - 1
-            spawn[i] = max(eats[eat_idx], i)
+    # growth: one segment per meal, spread across the run, capped at MAX_LEN
+    eat_order = sorted(eat_steps.values())
+    slots = MAX_LEN - MIN_LEN
+    spawn = {i: i for i in range(MIN_LEN)}
+    for j in range(slots):
+        if not eat_order:
+            break
+        idx = min(round((j + 1) * len(eat_order) / (slots + 1)), len(eat_order) - 1)
+        spawn[MIN_LEN + j] = max(eat_order[idx], MIN_LEN + j)
+    length = len(spawn)
 
     def frac(step):
         return step * STEP_S / total
 
-    cx0, cy0 = cell_center(*path_cells[0])
     points = " ".join(
         f"{x},{y}" for x, y in (cell_center(c, r) for c, r in path_cells)
     )
@@ -134,45 +167,45 @@ def main():
 
     # dots
     dur = f'dur="{total:.2f}s" repeatCount="indefinite"'
-    for i, (c, r) in enumerate(path_cells):
-        lv = level(grid[c][r])
-        x = PAD + c * PITCH
-        y = PAD + r * PITCH
-        color = EMPTY if lv == 0 else LEVELS[lv - 1]
-        if lv == 0:
-            svg.append(f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2.5" fill="{color}"/>')
-        else:
-            # pop when eaten: flash bright, burst outward and fade
-            te = frac(i)
-            t1 = min(te + 0.006, move_frac)   # burst peak
-            kt = f"0;{te:.4f};{t1:.4f};1"
-            grow = 6
-            svg.append(f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2.5" fill="{color}">')
-            svg.append(f'<animate attributeName="opacity" values="1;1;0;0" keyTimes="{kt}" {dur}/>')
-            svg.append(f'<animate attributeName="fill" values="{color};{color};#fff8c5;#fff8c5" keyTimes="{kt}" {dur}/>')
-            svg.append(f'<animate attributeName="x" values="{x};{x};{x - grow / 2};{x - grow / 2}" keyTimes="{kt}" {dur}/>')
-            svg.append(f'<animate attributeName="y" values="{y};{y};{y - grow / 2};{y - grow / 2}" keyTimes="{kt}" {dur}/>')
-            svg.append(f'<animate attributeName="width" values="{CELL};{CELL};{CELL + grow};{CELL + grow}" keyTimes="{kt}" {dur}/>')
-            svg.append(f'<animate attributeName="height" values="{CELL};{CELL};{CELL + grow};{CELL + grow}" keyTimes="{kt}" {dur}/>')
-            svg.append('</rect>')
+    for c in range(ncols):
+        for r in range(7):
+            lv = level(grid[c][r])
+            x = PAD + c * PITCH
+            y = PAD + r * PITCH
+            color = EMPTY if lv == 0 else LEVELS[lv - 1]
+            if lv == 0:
+                svg.append(f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2.5" fill="{color}"/>')
+            else:
+                # pop when the head arrives: flash bright, burst outward, fade
+                te = frac(eat_steps[(c, r)])
+                t1 = min(te + 0.006, move_frac)
+                kt = f"0;{te:.4f};{t1:.4f};1"
+                grow = 6
+                svg.append(f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2.5" fill="{color}">')
+                svg.append(f'<animate attributeName="opacity" values="1;1;0;0" keyTimes="{kt}" {dur}/>')
+                svg.append(f'<animate attributeName="fill" values="{color};{color};#fff8c5;#fff8c5" keyTimes="{kt}" {dur}/>')
+                svg.append(f'<animate attributeName="x" values="{x};{x};{x - grow / 2};{x - grow / 2}" keyTimes="{kt}" {dur}/>')
+                svg.append(f'<animate attributeName="y" values="{y};{y};{y - grow / 2};{y - grow / 2}" keyTimes="{kt}" {dur}/>')
+                svg.append(f'<animate attributeName="width" values="{CELL};{CELL};{CELL + grow};{CELL + grow}" keyTimes="{kt}" {dur}/>')
+                svg.append(f'<animate attributeName="height" values="{CELL};{CELL};{CELL + grow};{CELL + grow}" keyTimes="{kt}" {dur}/>')
+                svg.append('</rect>')
 
-    # snake: head + body segments following the same path with a step delay
+    # snake: positive begin so each segment TRAILS the head (head eats first)
     def visibility(ts):
         return (
             f'<animate attributeName="opacity" values="0;0;1;1;0;0" '
-            f'keyTimes="0;{ts:.4f};{min(ts + 0.002, 1):.4f};{move_frac:.4f};{min(move_frac + 0.01, 1):.4f};1" '
-            f'dur="{total:.2f}s" repeatCount="indefinite"/>'
+            f'keyTimes="0;{ts:.4f};{min(ts + 0.002, 1):.4f};0.985;0.995;1" '
+            f'{dur}/>'
         )
 
     def motion(i):
         return (
             f'<animateMotion dur="{total:.2f}s" repeatCount="indefinite" '
             f'calcMode="linear" keyPoints="0;1;1" keyTimes="0;{move_frac:.4f};1" '
-            f'begin="{-i * STEP_S:.2f}s"><mpath xlink:href="#p" href="#p"/></animateMotion>'
+            f'begin="{i * STEP_S:.2f}s"><mpath xlink:href="#p" href="#p"/></animateMotion>'
         )
 
     for i in range(length - 1, 0, -1):
-        # body tapers towards the tail
         size = CELL - 1 - round(3 * i / length)
         ts = min(frac(spawn[i]), move_frac - 0.004)
         svg.append(f'<rect x="{-size / 2}" y="{-size / 2}" width="{size}" height="{size}" rx="3.5" fill="{SNAKE_BODY}" opacity="0">')
@@ -200,7 +233,7 @@ def main():
     svg.append("</svg>")
     with open(out, "w") as f:
         f.write("\n".join(svg))
-    print(f"{out}: {n} cells, {len(eats)} contributions eaten, snake {MIN_LEN}->{length}")
+    print(f"{out}: {n} steps, {len(eat_steps)} meals, snake {MIN_LEN}->{length}, loop {total:.0f}s")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2600&pause=1000&color=58A6FF&background=0D1117&center=true&vCenter=true&width=700&height=70&lines=Automating+the+boring+stuff+since+day+one;Building+systems+that+run+while+I+sleep;Python+%E2%80%A2+Automation+%E2%80%A2+Data;If+I+do+it+twice%2C+I+write+code+for+it" alt="typing animation" />
+<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2600&pause=1000&color=58A6FF&background=0D1117&center=true&vCenter=true&width=700&height=70&lines=Automating+the+boring+stuff+since+day+one;Building+systems+that+run+while+I+sleep;Data+%E2%80%A2+Patterns+%E2%80%A2+Automation;If+I+do+it+twice%2C+I+write+code+for+it" alt="typing animation" />
 
 # Victor Pimenta
 
@@ -8,7 +8,7 @@
 <br>
 <em>I look at business through process analysis and data: find the bottleneck, kill it, let the system run on its own.</em>
 <br>
-<em>I don't do small.</em>
+<em>Data and pattern recognition are my home turf. I don't do small.</em>
 
 </div>
 
@@ -18,9 +18,11 @@
 
 **Running a stealth startup.** Building quietly. The name stays off the record for now. δόξα.
 
-**Insper alumnus.** Computer Science, São Paulo.
+**Computer Science at Insper.** São Paulo, Brazil.
 
-**Automation first.** Python for pipelines, bots and integrations. If it doesn't save time or create leverage, it doesn't get built.
+**Automation first.** Pipelines, bots and integrations. If it doesn't save time or create leverage, it doesn't get built.
+
+**Mastering data and pattern recognition.** Finding the signal everyone else scrolls past.
 
 ---
 
