@@ -13,10 +13,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: current calendar year only
+        run: echo "YEAR=$(date +%Y)" >> "$GITHUB_ENV"
+
       - uses: yoshi389111/github-profile-3d-contrib@0.7.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           USERNAME: ${{ github.repository_owner }}
+          SETTING_JSON: conf/3d-settings.json
+          YEAR: ${{ env.YEAR }}
 
       - name: Commit & push
         run: |

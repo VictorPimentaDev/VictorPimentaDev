@@ -133,6 +133,7 @@ def main():
     svg.append(f'<path id="p" d="M {points.replace(" ", " L ")}" fill="none"/>')
 
     # dots
+    dur = f'dur="{total:.2f}s" repeatCount="indefinite"'
     for i, (c, r) in enumerate(path_cells):
         lv = level(grid[c][r])
         x = PAD + c * PITCH
@@ -141,34 +142,60 @@ def main():
         if lv == 0:
             svg.append(f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2.5" fill="{color}"/>')
         else:
-            # eaten when the head arrives: visible -> gone -> back at loop start
+            # pop when eaten: flash bright, burst outward and fade
             te = frac(i)
-            svg.append(
-                f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2.5" fill="{color}">'
-                f'<animate attributeName="opacity" values="1;1;0;0" '
-                f'keyTimes="0;{te:.4f};{min(te + 0.004, 1):.4f};1" '
-                f'dur="{total:.2f}s" repeatCount="indefinite"/></rect>'
-            )
+            t1 = min(te + 0.006, move_frac)   # burst peak
+            kt = f"0;{te:.4f};{t1:.4f};1"
+            grow = 6
+            svg.append(f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2.5" fill="{color}">')
+            svg.append(f'<animate attributeName="opacity" values="1;1;0;0" keyTimes="{kt}" {dur}/>')
+            svg.append(f'<animate attributeName="fill" values="{color};{color};#fff8c5;#fff8c5" keyTimes="{kt}" {dur}/>')
+            svg.append(f'<animate attributeName="x" values="{x};{x};{x - grow / 2};{x - grow / 2}" keyTimes="{kt}" {dur}/>')
+            svg.append(f'<animate attributeName="y" values="{y};{y};{y - grow / 2};{y - grow / 2}" keyTimes="{kt}" {dur}/>')
+            svg.append(f'<animate attributeName="width" values="{CELL};{CELL};{CELL + grow};{CELL + grow}" keyTimes="{kt}" {dur}/>')
+            svg.append(f'<animate attributeName="height" values="{CELL};{CELL};{CELL + grow};{CELL + grow}" keyTimes="{kt}" {dur}/>')
+            svg.append('</rect>')
 
     # snake: head + body segments following the same path with a step delay
-    for i in range(length - 1, -1, -1):
-        head = i == 0
-        size = CELL + 2 if head else CELL - 1
-        color = SNAKE_HEAD if head else SNAKE_BODY
-        # keep keyTimes strictly increasing even for late spawns
-        ts = min(frac(spawn[i]), move_frac - 0.004)
-        svg.append(f'<rect x="{-size / 2}" y="{-size / 2}" width="{size}" height="{size}" rx="3.5" fill="{color}" opacity="0">')
-        svg.append(
+    def visibility(ts):
+        return (
             f'<animate attributeName="opacity" values="0;0;1;1;0;0" '
             f'keyTimes="0;{ts:.4f};{min(ts + 0.002, 1):.4f};{move_frac:.4f};{min(move_frac + 0.01, 1):.4f};1" '
             f'dur="{total:.2f}s" repeatCount="indefinite"/>'
         )
-        svg.append(
+
+    def motion(i):
+        return (
             f'<animateMotion dur="{total:.2f}s" repeatCount="indefinite" '
             f'calcMode="linear" keyPoints="0;1;1" keyTimes="0;{move_frac:.4f};1" '
             f'begin="{-i * STEP_S:.2f}s"><mpath xlink:href="#p" href="#p"/></animateMotion>'
         )
+
+    for i in range(length - 1, 0, -1):
+        # body tapers towards the tail
+        size = CELL - 1 - round(3 * i / length)
+        ts = min(frac(spawn[i]), move_frac - 0.004)
+        svg.append(f'<rect x="{-size / 2}" y="{-size / 2}" width="{size}" height="{size}" rx="3.5" fill="{SNAKE_BODY}" opacity="0">')
+        svg.append(visibility(ts))
+        svg.append(motion(i))
         svg.append("</rect>")
+
+    # head: eyes + constant chomping pulse (scale on an inner group so it
+    # pulses around the head centre, not the canvas origin)
+    hs = CELL + 3
+    svg.append('<g opacity="0">')
+    svg.append(visibility(0.0))
+    svg.append(motion(0))
+    svg.append("<g>")
+    svg.append(
+        f'<animateTransform attributeName="transform" type="scale" '
+        f'values="1;1.2;1" dur="{STEP_S * 2:.2f}s" repeatCount="indefinite"/>'
+    )
+    svg.append(f'<rect x="{-hs / 2}" y="{-hs / 2}" width="{hs}" height="{hs}" rx="4.5" fill="{SNAKE_HEAD}"/>')
+    svg.append(f'<circle cx="-3" cy="-2.5" r="1.8" fill="{BG}"/>')
+    svg.append(f'<circle cx="3" cy="-2.5" r="1.8" fill="{BG}"/>')
+    svg.append("</g>")
+    svg.append("</g>")
 
     svg.append("</svg>")
     with open(out, "w") as f:

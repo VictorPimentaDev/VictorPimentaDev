@@ -1,18 +1,14 @@
 <div align="center">
 
-<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2600&pause=1000&color=58A6FF&background=0D1117&center=true&vCenter=true&width=700&height=70&lines=Automating+the+boring+stuff+since+day+one;Building+systems+that+run+while+I+sleep;E-commerce+%E2%80%A2+Automation+%E2%80%A2+Python;If+I+do+it+twice%2C+I+write+code+for+it" alt="typing animation" />
+<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=2600&pause=1000&color=58A6FF&background=0D1117&center=true&vCenter=true&width=700&height=70&lines=Automating+the+boring+stuff+since+day+one;Building+systems+that+run+while+I+sleep;Python+%E2%80%A2+Automation+%E2%80%A2+Data;If+I+do+it+twice%2C+I+write+code+for+it" alt="typing animation" />
 
 # Victor Pimenta
 
-<em>I love automating things — if I have to do something twice, I write code so there's no third time.</em>
+<em>I love automating things. If I have to do something twice, I write code so there is no third time.</em>
 <br>
-<em>I look at software through a business lens: find the process, kill the bottleneck, let the system run on its own.</em>
+<em>I look at business through process analysis and data: find the bottleneck, kill it, let the system run on its own.</em>
 <br>
-<em>Running an e-commerce while studying Computer Science at Insper — shipping beats perfect.</em>
-
-<br>
-
-[incraft.digital →](https://incraft.digital/)
+<em>I don't do small.</em>
 
 </div>
 
@@ -20,15 +16,15 @@
 
 ## Now
 
-**Founder @ [Incraft](https://incraft.digital/)** — e-commerce operation built to run itself. Every manual process is a bug waiting for automation.
+**Running a stealth startup.** Building quietly. The name stays off the record for now. δόξα.
 
-**Computer Science @ Insper** — São Paulo, Brazil.
+**Insper alumnus.** Computer Science, São Paulo.
 
-**Automation-first** — Python for pipelines, bots and integrations. Business vision first, code second: if it doesn't save time or make money, it doesn't get built.
+**Automation first.** Python for pipelines, bots and integrations. If it doesn't save time or create leverage, it doesn't get built.
 
 ---
 
-## 🐍 Snake — it grows as it eats
+## 🐍 Snake: it grows as it eats
 
 <div align="center">
 
@@ -64,6 +60,6 @@ Feel free to connect with me on [LinkedIn](https://www.linkedin.com/in/victorpim
 
 <div align="center">
 
-[LinkedIn](https://www.linkedin.com/in/victorpimentainsper/) · [Instagram](https://www.instagram.com/victor_pimenta_/) · [incraft.digital](https://incraft.digital/)
+[LinkedIn](https://www.linkedin.com/in/victorpimentainsper/) · [Instagram](https://www.instagram.com/victor_pimenta_/)
 
 </div>
