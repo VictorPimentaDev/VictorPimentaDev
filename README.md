@@ -58,16 +58,6 @@
 
 ---
 
-## Yearly Stats
-
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/VictorPimentaDev/VictorPimentaDev/main/profile-3d-contrib/profile-gitblock.svg" alt="3D contribution chart" width="100%" />
-
-</div>
-
----
-
 ## Contact Me
 
 Feel free to connect with me on [LinkedIn](https://www.linkedin.com/in/victorpimentainsper/).
