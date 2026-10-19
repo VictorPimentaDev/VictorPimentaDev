@@ -16,7 +16,7 @@
 
 ## Now
 
-**Running a stealth startup.** Building quietly. The name stays off the record for now. δόξα.
+**Running a stealth startup.** Building quietly. The name stays off the record for now. Doxa.
 
 **Computer Science at Insper.** São Paulo, Brazil.
 
