@@ -18,6 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: verify snake movement and SVG frames
+        run: python3 -m unittest -v
+
       - name: generate growing snake svg
         run: |
           mkdir -p dist
