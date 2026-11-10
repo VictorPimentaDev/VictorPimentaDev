@@ -38,7 +38,7 @@ class SnakeTest(unittest.TestCase):
             self.assertEqual(frame[1:], previous[:len(frame) - 1])
             self.assertNotIn(frame[0], previous)
             if frame[0] in pending:
-                self.assertEqual(len(frame), min(len(previous) + 1, MAX_LEN))
+                self.assertIn(len(frame), {len(previous), min(len(previous) + 1, MAX_LEN)})
                 pending.remove(frame[0])
                 if not pending:
                     hunting = False
@@ -115,8 +115,33 @@ class SnakeTest(unittest.TestCase):
     def test_meal_at_last_cell_and_growth_reset(self):
         self.check_grid([[0] * 6 + [1]], seed=0)
         frames, _ = build_frames([[1] * 7], seed=0)
-        self.assertEqual(max(map(len, frames)), MAX_LEN)
+        self.assertEqual(max(map(len, frames)), MIN_LEN + 7)
         self.assertEqual(len(frames[-1]), MIN_LEN)
+
+    def test_grows_while_eating_up_to_the_cap(self):
+        rng = random.Random(11)
+        grid = [[0] * 7 for _ in range(30)]
+        grid += [[rng.choice([0, 1, 1, 5, 12]) for _ in range(7)] for _ in range(23)]
+        for seed in range(4):
+            frames, eats = build_frames(grid, seed=seed)
+            lengths = [len(frame) for frame in frames]
+            last_meal = max(eats.values())
+            hunt = lengths[:last_meal + 1]
+            # Never shrinks while hunting, grows one segment at a time.
+            for a, b in zip(hunt, hunt[1:]):
+                self.assertIn(b - a, (0, 1))
+            self.assertEqual(max(lengths), MAX_LEN)
+            self.assertGreater(MAX_LEN, MIN_LEN + 5)
+            # Growth is spread out: the cap is reached well into the hunt,
+            # and the snake keeps growing visibly before that.
+            first_cap = lengths.index(MAX_LEN)
+            self.assertGreater(first_cap, last_meal * 0.3)
+            self.assertLess(first_cap, last_meal)
+            # The return trip retracts the tail at most one segment per step.
+            back = lengths[last_meal:]
+            for a, b in zip(back, back[1:]):
+                self.assertIn(a - b, (0, 1))
+            self.assertEqual(lengths[-1], MIN_LEN)
 
     def test_constant_speed_and_reasonable_loop(self):
         rng = random.Random(7)

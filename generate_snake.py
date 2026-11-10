@@ -27,7 +27,8 @@ TARGET_LOOP_S = 26.0  # whole loop length we aim for
 MIN_STEP_S = 0.06    # fastest a cell may take (keeps motion readable)
 MAX_STEP_S = 0.11    # slowest a cell may take (short routes stay lively)
 MIN_LEN = 3        # starting snake length (head included)
-MAX_LEN = 7        # she stays a comfortable size
+MAX_LEN = 12       # grows while eating, never past this
+GROW_SPAN = 0.7    # reach MAX_LEN after ~70% of the meals
 START = ((-1, 0), (-1, -1), (0, -1))
 
 # --- GitHub dark palette ---
@@ -129,7 +130,10 @@ def bfs_path(start, goals, blocked, ncols, rng, heading=None):
             break
         for nxt in neighbors(cur, ncols, rng):
             if nxt in blocked:
-                continue
+                # A dict maps body cells to the step they are vacated at.
+                free_at = blocked[nxt] if isinstance(blocked, dict) else None
+                if free_at is None or steps + 1 < free_at:
+                    continue
             new_dir = (nxt[0] - cur[0], nxt[1] - cur[1])
             cost = (steps + 1, turns + (direction is not None and new_dir != direction))
             key = (nxt, new_dir)
@@ -197,8 +201,49 @@ def pose_path(start_body, goal, ncols, rng, shrink=True):
     return heads
 
 
+def grow_every(meals):
+    """Meals per extra segment, so growth is spread across the whole hunt."""
+    if meals <= 0:
+        return 1
+    return max(1, -(-int(meals * GROW_SPAN) // (MAX_LEN - MIN_LEN)))
+
+
+# Final approach: along the top lane, then down into the starting pose.
+HOME_LANE = [(1, -1), (0, -1), (-1, -1), (-1, 0)]
+
+
+def shrink_schedule(length, steps):
+    """Lengths for each return step: tail retracts evenly down to MIN_LEN."""
+    extra = length - MIN_LEN
+    return [length - round(extra * (i + 1) / steps) for i in range(steps)]
+
+
 def build_frames(grid, seed=None, rng=None):
-    """Chase every meal, then return outside the grid to the same pose."""
+    """Chase every meal, then return outside the grid to the same pose.
+
+    A long snake can, rarely, corner itself; then the route is re-rolled
+    (still deterministic per seed) and, as a last resort, the cap lowered.
+    """
+    global MAX_LEN
+    base = daily_seed() if seed is None else seed
+    cap = MAX_LEN
+    attempts = [(rng, cap)] + [(random.Random(f"{base}:retry{n}"), cap) for n in range(6)]
+    attempts += [(random.Random(f"{base}:small{n}"), small)
+                 for n, small in enumerate((9, 7, 5))]
+    error = None
+    try:
+        for attempt_rng, attempt_cap in attempts:
+            MAX_LEN = attempt_cap
+            try:
+                return _build_frames(grid, seed=base, rng=attempt_rng)
+            except RuntimeError as exc:
+                error = exc
+    finally:
+        MAX_LEN = cap
+    raise error
+
+
+def _build_frames(grid, seed=None, rng=None):
     ncols = len(grid)
     if not ncols or any(len(column) != 7 for column in grid):
         raise ValueError("Expected a nonempty contribution grid with seven rows")
@@ -224,6 +269,11 @@ def build_frames(grid, seed=None, rng=None):
 
     plan = []
 
+    def body_timeline(margin=1):
+        # Segment i leaves its cell after len(body) - i moves; +1 in case
+        # the snake grows on the way.
+        return {cell: len(body) - i + margin for i, cell in enumerate(body)}
+
     def heading():
         return (body[0][0] - body[1][0], body[0][1] - body[1][1])
 
@@ -233,10 +283,25 @@ def build_frames(grid, seed=None, rng=None):
         nonlocal plan
         if (not plan or plan[0] in body or plan[-1] not in goals
                 or abs(plan[0][0] - body[0][0]) + abs(plan[0][1] - body[0][1]) != 1):
-            plan = bfs_path(body[0], goals, set(body), ncols, rng, heading())
+            plan = bfs_path(body[0], goals, body_timeline(), ncols, rng, heading())
+        if plan and not safe(plan):
+            plan = []
+            tail_path = bfs_path(body[0], {body[-1]}, body_timeline(0), ncols, rng, heading())
+            if tail_path:
+                return tail_path[0]
         if not plan:
             return None
         return plan.pop(0)
+
+    def safe(route):
+        # After eating, the head must still be able to reach its own tail;
+        # otherwise a long snake walls itself into a pocket.
+        sim = body
+        for head in route:
+            grow = head in foods and len(sim) < MAX_LEN
+            sim = move(sim, head, len(sim) + (1 if grow else 0))
+        timeline = {cell: len(sim) - i for i, cell in enumerate(sim)}
+        return bool(bfs_path(sim[0], {sim[-1]}, timeline, ncols, rng))
 
     def free_neighbor():
         options = [cell for cell in neighbors(body[0], ncols, rng) if cell not in body]
@@ -251,7 +316,27 @@ def build_frames(grid, seed=None, rng=None):
                         set(body), ncols, rng, heading())
         return (path[0] if path else None) or free_neighbor()
 
+    def home_route():
+        """Fewest-turns route back, ending on the top lane into START."""
+        lane = HOME_LANE
+        if body[0] in lane or (2, -1) in body:
+            return []
+        path = bfs_path(body[0], {(2, -1)}, set(body) | set(lane), ncols, rng, heading())
+        if not path:
+            return []
+        heads = path + lane
+        if len(heads) < len(body) - MIN_LEN:
+            return []
+        sim = body
+        for head, length in zip(heads, shrink_schedule(len(body), len(heads))):
+            if head in sim or not in_area(head, ncols):
+                return []
+            sim = move(sim, head, length)
+        return heads if sim == START else []
+
     stall = 0
+    meals_eaten = 0
+    every = grow_every(len(foods))
     while foods:
         nxt = next_towards(foods)
         if nxt is None:
@@ -264,7 +349,9 @@ def build_frames(grid, seed=None, rng=None):
         if nxt in foods:
             foods.remove(nxt)
             eats[nxt] = len(frames)
-            length = min(len(body) + 1, MAX_LEN)
+            meals_eaten += 1
+            grow = meals_eaten % every == 0 or meals_eaten <= 1
+            length = min(len(body) + 1, MAX_LEN) if grow else len(body)
         else:
             length = len(body)
         if not step_to(nxt, length):
@@ -275,6 +362,12 @@ def build_frames(grid, seed=None, rng=None):
             if not step_to(head, MIN_LEN):
                 raise RuntimeError("Snake could not loop on an empty grid")
     elif body != START:
+        heads = home_route()
+        if heads:
+            for head, length in zip(heads, shrink_schedule(len(body), len(heads))):
+                if not step_to(head, length):
+                    raise RuntimeError("Snake could not return to the start")
+    if len(frames) > 1 and body != START:
         heads = pose_path(body, START, ncols, rng, shrink=True)
         if not heads:
             raise RuntimeError("Snake could not return to the start")
