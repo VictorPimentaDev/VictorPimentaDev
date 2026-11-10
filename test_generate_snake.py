@@ -3,12 +3,12 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from generate_snake import (
-    EMPTY_STEP_S,
     MAX_LEN,
+    MAX_STEP_S,
     MIN_LEN,
     PITCH,
     START,
-    STEP_S,
+    MIN_STEP_S,
     build_frames,
     cell_center,
     key_times,
@@ -52,10 +52,9 @@ class SnakeTest(unittest.TestCase):
         expected_times, total = key_times(durations)
         self.assertGreater(total, 0)
         self.assertEqual(len(durations), len(frames) - 1)
-        for previous, frame, duration in zip(frames, frames[1:], durations):
-            col, row = frame[0]
-            meal = 0 <= col < len(grid) and 0 <= row < 7 and grid[col][row] > 0
-            self.assertEqual(duration, STEP_S if meal else EMPTY_STEP_S)
+        # One constant speed for the whole loop: no surges between cells.
+        self.assertEqual(len(set(durations)), 1)
+        self.assertTrue(MIN_STEP_S <= durations[0] <= MAX_STEP_S)
 
         root = ET.fromstring(render_svg(grid, seed=seed) if svg is None else svg)
         ns = {'s': 'http://www.w3.org/2000/svg'}
@@ -119,19 +118,29 @@ class SnakeTest(unittest.TestCase):
         self.assertEqual(max(map(len, frames)), MAX_LEN)
         self.assertEqual(len(frames[-1]), MIN_LEN)
 
-    def test_variable_timing_makes_empty_cells_faster(self):
-        grid = [[1] + [0] * 6]
-        frames, _ = build_frames(grid, seed=0)
+    def test_constant_speed_and_reasonable_loop(self):
+        rng = random.Random(7)
+        grid = [[rng.choice([0, 0, 0, 1, 5, 12]) for _ in range(7)] for _ in range(53)]
+        frames, _ = build_frames(grid, seed=3)
         durations = step_durations(frames, grid)
         times, total = key_times(durations)
-        meals = sum(1 for duration in durations if duration == STEP_S)
-        empties = sum(1 for duration in durations if duration == EMPTY_STEP_S)
-        self.assertEqual(meals, 1)
-        self.assertGreater(empties, 0)
-        self.assertAlmostEqual(total, meals * STEP_S + empties * EMPTY_STEP_S)
+        self.assertEqual(len(set(durations)), 1)
         self.assertEqual(times[0], 0.0)
         self.assertEqual(times[-1], 1.0)
-        self.assertLess(total, (len(frames) - 1) * 0.16)
+        self.assertTrue(15 <= total <= 35, total)
+
+    def test_route_mostly_runs_straight(self):
+        # Real profiles cluster contributions in recent weeks.
+        rng = random.Random(5)
+        grid = [[0] * 7 for _ in range(30)]
+        grid += [[rng.choice([0, 1, 1, 5, 12]) for _ in range(7)] for _ in range(23)]
+        for seed in range(4):
+            frames, _ = build_frames(grid, seed=seed)
+            heads = [frame[0] for frame in frames]
+            moves = [(b[0] - a[0], b[1] - a[1]) for a, b in zip(heads, heads[1:])]
+            turns = sum(1 for a, b in zip(moves, moves[1:]) if a != b)
+            # A random-tie-break staircase turns on ~half the cells.
+            self.assertLess(turns / len(moves), 0.35, (seed, turns, len(moves)))
 
     def test_same_seed_is_deterministic(self):
         rng = random.Random(1)

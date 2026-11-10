@@ -10,10 +10,12 @@ Usage: GITHUB_TOKEN=... python3 generate_snake.py <github_user> <output.svg>
 """
 import json
 import os
+import heapq
 import random
 import sys
 import urllib.request
 from collections import deque
+from itertools import count
 from datetime import datetime, timezone
 
 # --- layout ---
@@ -21,8 +23,9 @@ CELL = 12          # cell size
 GAP = 3            # gap between cells
 PITCH = CELL + GAP
 PAD = 10           # canvas padding
-STEP_S = 0.10      # seconds per cell when eating
-EMPTY_STEP_S = 0.04  # empty cells and the return lane (keeps the loop snappy)
+TARGET_LOOP_S = 26.0  # whole loop length we aim for
+MIN_STEP_S = 0.06    # fastest a cell may take (keeps motion readable)
+MAX_STEP_S = 0.11    # slowest a cell may take (short routes stay lively)
 MIN_LEN = 3        # starting snake length (head included)
 MAX_LEN = 7        # she stays a comfortable size
 START = ((-1, 0), (-1, -1), (0, -1))
@@ -96,32 +99,54 @@ def neighbors(cell, ncols, rng):
     return [option for option in options if in_area(option, ncols)]
 
 
-def bfs_path(start, goals, blocked, ncols, rng):
-    """Shortest path from start to any goal, not stepping on blocked cells."""
+def bfs_path(start, goals, blocked, ncols, rng, heading=None):
+    """Shortest path from start to a goal, with as few turns as possible.
+
+    Ties between equally short and equally straight routes, and between
+    equally near goals, are broken at random so every run looks different.
+    Staying straight matters: a staircase that turns every cell reads as
+    jitter once the motion is interpolated.
+    """
     goals = set(goals) - {start}
     if not goals:
         return []
-    prev = {start: None}
-    queue = deque([start])
+    order = count()
+    best = {}
+    prev = {}
+    heap = [(0, 0, rng.random(), next(order), start, heading)]
+    best[(start, heading)] = (0, 0)
+    prev[(start, heading)] = None
     found = None
-    while queue:
-        cur = queue.popleft()
+    found_cost = None
+    while heap:
+        steps, turns, _, _, cur, direction = heapq.heappop(heap)
+        if best.get((cur, direction)) != (steps, turns):
+            continue
+        if found_cost is not None and (steps, turns) > found_cost:
+            break
+        if cur in goals and cur != start:
+            found, found_cost = (cur, direction), (steps, turns)
+            break
         for nxt in neighbors(cur, ncols, rng):
-            if nxt in prev or nxt in blocked:
+            if nxt in blocked:
                 continue
-            prev[nxt] = cur
-            if nxt in goals:
-                found = nxt
-                queue.clear()
-                break
-            queue.append(nxt)
+            new_dir = (nxt[0] - cur[0], nxt[1] - cur[1])
+            cost = (steps + 1, turns + (direction is not None and new_dir != direction))
+            key = (nxt, new_dir)
+            if key in best and best[key] <= cost:
+                continue
+            best[key] = cost
+            prev[key] = (cur, direction)
+            heapq.heappush(heap, (cost[0], cost[1], rng.random(), next(order), nxt, new_dir))
     if found is None:
         return []
-    path = [found]
-    while path[-1] != start:
-        path.append(prev[path[-1]])
+    path = []
+    state = found
+    while prev[state] is not None:
+        path.append(state[0])
+        state = prev[state]
     path.reverse()
-    return path[1:]
+    return path
 
 
 def border_loop(ncols):
@@ -197,9 +222,21 @@ def build_frames(grid, seed=None, rng=None):
         frames.append(body)
         return True
 
+    plan = []
+
+    def heading():
+        return (body[0][0] - body[1][0], body[0][1] - body[1][1])
+
     def next_towards(goals):
-        path = bfs_path(body[0], goals, set(body), ncols, rng)
-        return path[0] if path else None
+        # Follow the committed route; re-planning every cell with a fresh
+        # random tie-break is what made the snake zigzag.
+        nonlocal plan
+        if (not plan or plan[0] in body or plan[-1] not in goals
+                or abs(plan[0][0] - body[0][0]) + abs(plan[0][1] - body[0][1]) != 1):
+            plan = bfs_path(body[0], goals, set(body), ncols, rng, heading())
+        if not plan:
+            return None
+        return plan.pop(0)
 
     def free_neighbor():
         options = [cell for cell in neighbors(body[0], ncols, rng) if cell not in body]
@@ -210,8 +247,9 @@ def build_frames(grid, seed=None, rng=None):
             candidate = cycle[loop.index(body[0]) + 1]
             if candidate not in body:
                 return candidate
-        nxt = next_towards({START[2], START[1], START[0]} | set(loop))
-        return nxt or free_neighbor()
+        path = bfs_path(body[0], {START[2], START[1], START[0]} | set(loop),
+                        set(body), ncols, rng, heading())
+        return (path[0] if path else None) or free_neighbor()
 
     stall = 0
     while foods:
@@ -254,15 +292,16 @@ def cell_center(col, row):
             PAD + (row + 1) * PITCH + CELL / 2)
 
 
-def is_meal(grid, cell):
-    col, row = cell
-    return 0 <= col < len(grid) and 0 <= row < 7 and grid[col][row] > 0
+def step_seconds(steps):
+    """One constant speed per loop: no surges or brakes between cells."""
+    if steps <= 0:
+        return MAX_STEP_S
+    return min(MAX_STEP_S, max(MIN_STEP_S, TARGET_LOOP_S / steps))
 
 
-def step_durations(frames, grid):
-    """Time to move into each frame: meals stay readable, empty cells dash."""
-    return [STEP_S if is_meal(grid, frame[0]) else EMPTY_STEP_S
-            for frame in frames[1:]]
+def step_durations(frames, grid=None):
+    steps = len(frames) - 1
+    return [step_seconds(steps)] * steps
 
 
 def key_times(durations):
