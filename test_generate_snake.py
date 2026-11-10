@@ -12,6 +12,8 @@ from generate_snake import (
     build_frames,
     cell_center,
     key_times,
+    loop_times,
+    route_geometry,
     render_svg,
     step_durations,
 )
@@ -56,51 +58,72 @@ class SnakeTest(unittest.TestCase):
         self.assertEqual(len(set(durations)), 1)
         self.assertTrue(MIN_STEP_S <= durations[0] <= MAX_STEP_S)
 
-        root = ET.fromstring(render_svg(grid, seed=seed) if svg is None else svg)
+        svg = render_svg(grid, seed=seed) if svg is None else svg
+        root = ET.fromstring(svg)
         ns = {'s': 'http://www.w3.org/2000/svg'}
-        rendered = [[] for _ in frames]
-        groups = root.findall('s:g', ns)
-        width, height = float(root.attrib['width']), float(root.attrib['height'])
-        for group in reversed(groups):
-            motion = group.find('s:animateTransform', ns)
-            opacity = group.find('s:animate', ns)
-            self.assertEqual(motion.attrib['calcMode'], 'linear')
-            self.assertEqual(opacity.attrib['calcMode'], 'discrete')
-            self.assertNotIn('begin', motion.attrib)
-            times = list(map(float, motion.attrib['keyTimes'].split(';')))
-            self.assertEqual(len(times), len(frames))
-            self.assertEqual(times[0], 0)
-            self.assertEqual(times[-1], 1)
-            for previous, time in zip(times, times[1:]):
-                self.assertGreater(time, previous)
-            for step, time in enumerate(times):
-                self.assertAlmostEqual(time, expected_times[step])
-            self.assertEqual(motion.attrib['keyTimes'], opacity.attrib['keyTimes'])
-            self.assertEqual(motion.attrib['dur'], f'{total:.2f}s')
-            self.assertEqual(opacity.attrib['dur'], f'{total:.2f}s')
-            positions = [tuple(map(float, p.split(',')))
-                         for p in motion.attrib['values'].split(';')]
-            visibility = opacity.attrib['values'].split(';')
-            self.assertEqual(len(positions), len(frames))
-            self.assertEqual(len(visibility), len(frames))
-            self.assertEqual(positions[0], positions[-1])
-            self.assertEqual(visibility[0], visibility[-1])
-            for a, b in zip(positions, positions[1:]):
-                self.assertEqual(abs(a[0] - b[0]) + abs(a[1] - b[1]), PITCH)
-            for step, (position, visible) in enumerate(zip(positions, visibility)):
-                x, y = position
-                self.assertTrue(6 <= x <= width - 6 and 6 <= y <= height - 6)
-                if visible == '1':
-                    rendered[step].append(position)
-        self.assertEqual(rendered, [[cell_center(*cell) for cell in frame] for frame in frames])
+        _, cum, steps = route_geometry(frames)
+        times = loop_times(frames)
+        self.assertEqual(times[0], 0.0)
+        self.assertEqual(times[-1], 1.0)
+        for previous, time in zip(times, times[1:]):
+            self.assertGreater(time, previous)
+        # Constant speed: each step takes time proportional to its length.
+        lap = cum[2 * steps] - cum[steps]
+        for k in range(steps):
+            self.assertAlmostEqual(times[k + 1] - times[k],
+                                   (cum[steps + k + 1] - cum[steps + k]) / lap)
 
-        food_animations = root.findall('s:rect/s:animate', ns)
-        self.assertEqual(len(food_animations), len(eats))
-        eat_times = {round(expected_times[step], 8) for step in eats.values()}
-        for animation in food_animations:
-            self.assertEqual(animation.attrib['calcMode'], 'discrete')
-            self.assertIn(round(float(animation.attrib['keyTimes'].split(';')[1]), 8),
-                          eat_times)
+        # Cost must not scale with the snake's length or the meal count.
+        animations = [el for el in root.iter()
+                      if el.tag.split('}')[1] in ('animate', 'animateMotion', 'animateTransform', 'set')]
+        self.assertLessEqual(len(animations), 4)
+
+        body = root.find('s:path[@id="route"]', ns)
+        dash_anim, offset_anim = body.findall('s:animate', ns)
+        self.assertEqual(dash_anim.attrib['attributeName'], 'stroke-dasharray')
+        self.assertEqual(offset_anim.attrib['attributeName'], 'stroke-dashoffset')
+        for anim in (dash_anim, offset_anim):
+            self.assertEqual(anim.attrib['calcMode'], 'linear')
+            self.assertEqual(anim.attrib['dur'], f'{total:.2f}s')
+            self.assertEqual(anim.attrib['keyTimes'], dash_anim.attrib['keyTimes'])
+            self.assertEqual(len(anim.attrib['values'].split(';')), len(frames))
+        dashes = [float(v.split()[0]) for v in dash_anim.attrib['values'].split(';')]
+        tails = [-float(v) for v in offset_anim.attrib['values'].split(';')]
+        self.assertEqual(dashes[0], dashes[-1])
+        for k, frame in enumerate(frames):
+            head = cum[steps + k]
+            tail = cum[steps + k - (len(frame) - 1)]
+            self.assertAlmostEqual(tails[k], tail, places=1)
+            self.assertAlmostEqual(dashes[k] + tails[k], head, places=1)
+        # The tail never jumps: it holds still while growing and moves at
+        # most two cells per step while shrinking.
+        for k in range(steps):
+            if k + 1 == steps:
+                break
+            self.assertGreaterEqual(tails[k + 1] - tails[k], -0.01)
+            self.assertLessEqual(tails[k + 1] - tails[k], 2 * PITCH + 0.01)
+
+        motion = root.find('s:g[@id="head"]/s:animateMotion', ns)
+        self.assertEqual(motion.attrib['calcMode'], 'linear')
+        self.assertEqual(motion.attrib['keyTimes'], '0;1')
+        self.assertEqual(motion.attrib['dur'], f'{total:.2f}s')
+        start, end = map(float, motion.attrib['keyPoints'].split(';'))
+        self.assertAlmostEqual(start, cum[steps] / cum[-1], places=5)
+        self.assertAlmostEqual(end, cum[2 * steps] / cum[-1], places=5)
+
+        wipe = root.find('s:mask/s:path/s:animate', ns)
+        self.assertEqual(wipe.attrib['keyTimes'], dash_anim.attrib['keyTimes'])
+        trail = [tuple(map(float, p.split(','))) for p in
+                 root.find('s:mask/s:path', ns).attrib['d'][1:].split(' L')]
+        self.assertEqual(trail, [cell_center(*frame[0]) for frame in frames])
+        wiped = [float(v.split()[0]) for v in wipe.attrib['values'].split(';')]
+        for previous, value in zip(wiped, wiped[1:]):
+            self.assertGreater(value, previous)
+        foods_drawn = root.findall('s:g[@mask]/s:rect', ns)
+        self.assertEqual(len(foods_drawn), len(eats))
+        for step in eats.values():
+            # Wiped just as the head reaches the cell, not before.
+            self.assertAlmostEqual(wiped[step], step * PITCH + 6)
 
     def test_empty_dense_and_sparse_grids(self):
         rng = random.Random(42)

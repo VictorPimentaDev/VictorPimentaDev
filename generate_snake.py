@@ -412,13 +412,72 @@ def format_times(times):
     return ";".join(f"{time:.8f}" for time in times)
 
 
+CORNER_R = 5.0      # turns are drawn as quarter arcs of this radius
+BODY_W = CELL - 2   # body stroke width
+
+
+def route_geometry(frames):
+    """One smooth path for the whole loop, drawn twice back to back.
+
+    Returns the path data, the arc length at every route point and the
+    index where the second lap starts. The head rides the second lap and
+    the body trails behind it into the first, so a single dashed stroke
+    draws the whole body at any length.
+    """
+    heads = [frame[0] for frame in frames]
+    steps = len(heads) - 1
+    # lap 1 + lap 2 + one extra point so both lap starts get the same fillet
+    cells = heads + heads[1:] + [heads[1]] if steps else heads
+    pts = [cell_center(*cell) for cell in cells]
+    cmds = [f"M{pts[0][0]:g},{pts[0][1]:g}"]
+    cum = [0.0]
+    length = 0.0
+    cursor = pts[0]
+    quarter = CORNER_R * 3.141592653589793 / 2
+    for i in range(1, len(pts)):
+        p = pts[i]
+        if i == len(pts) - 1:
+            length += abs(p[0] - cursor[0]) + abs(p[1] - cursor[1])
+            cmds.append(f"L{p[0]:g},{p[1]:g}")
+            cum.append(length)
+            break
+        prev, nxt = pts[i - 1], pts[i + 1]
+        din = ((p[0] - prev[0]) / PITCH, (p[1] - prev[1]) / PITCH)
+        dout = ((nxt[0] - p[0]) / PITCH, (nxt[1] - p[1]) / PITCH)
+        if din == dout:
+            length += abs(p[0] - cursor[0]) + abs(p[1] - cursor[1])
+            cursor = p
+            cum.append(length)
+            continue
+        start = (p[0] - CORNER_R * din[0], p[1] - CORNER_R * din[1])
+        end = (p[0] + CORNER_R * dout[0], p[1] + CORNER_R * dout[1])
+        length += abs(start[0] - cursor[0]) + abs(start[1] - cursor[1])
+        sweep = 1 if din[0] * dout[1] - din[1] * dout[0] > 0 else 0
+        cmds.append(f"L{start[0]:g},{start[1]:g}")
+        cmds.append(f"A{CORNER_R:g},{CORNER_R:g} 0 0 {sweep} {end[0]:g},{end[1]:g}")
+        cum.append(length + quarter / 2)  # the cell is passed mid-arc
+        length += quarter
+        cursor = end
+    return " ".join(cmds), cum, steps
+
+
+def loop_times(frames):
+    """Fraction of the loop at which the head passes each route cell."""
+    _, cum, steps = route_geometry(frames)
+    lap = cum[2 * steps] - cum[steps]
+    times = [(cum[steps + k] - cum[steps]) / lap for k in range(steps + 1)]
+    times[-1] = 1.0
+    return times
+
+
 def render_svg(grid, seed=None, rng=None):
     frames, eat_steps = build_frames(grid, seed=seed, rng=rng)
-    durations = step_durations(frames, grid)
-    times, total = key_times(durations)
-    keytimes = format_times(times)
-    motion_timing = f'dur="{total:.2f}s" repeatCount="indefinite" calcMode="linear"'
-    jump_timing = f'dur="{total:.2f}s" repeatCount="indefinite" calcMode="discrete"'
+    total = sum(step_durations(frames, grid))
+    d, cum, steps = route_geometry(frames)
+    times = loop_times(frames)
+    full = cum[-1]
+    lap0, lap1 = cum[steps], cum[2 * steps]
+    loop = f'dur="{total:.2f}s" repeatCount="indefinite"'
     width = PAD * 2 + (len(grid) + 2) * PITCH - GAP
     height = PAD * 2 + 9 * PITCH - GAP
     svg = [
@@ -427,44 +486,65 @@ def render_svg(grid, seed=None, rng=None):
         '<title id="title">Snake growing as it eats GitHub contributions</title>',
         f'<rect width="{width}" height="{height}" rx="6" fill="{BG}"/>',
     ]
+    keytimes = format_times(times)
+    foods = []
     for col, column in enumerate(grid):
         for row, count in enumerate(column):
             lv = level(count)
             x, y = cell_center(col, row)
-            color = EMPTY if lv == 0 else LEVELS[lv - 1]
-            svg.append(f'<rect x="{x - CELL / 2}" y="{y - CELL / 2}" '
-                       f'width="{CELL}" height="{CELL}" rx="2.5" fill="{color}">')
+            cell = (f'x="{x - CELL / 2:g}" y="{y - CELL / 2:g}" width="{CELL}" '
+                    f'height="{CELL}" rx="2.5"')
+            svg.append(f'<rect {cell} fill="{EMPTY}"/>')
             if lv:
-                eaten = times[eat_steps[(col, row)]]
-                svg.append(f'<animate attributeName="fill" values="{color};{EMPTY};{EMPTY}" '
-                           f'keyTimes="0;{eaten:.8f};1" {jump_timing}/>')
-            svg.append('</rect>')
+                foods.append(f'<rect {cell} fill="{LEVELS[lv - 1]}"/>')
 
-    steps = len(frames) - 1
-    for segment in reversed(range(max(map(len, frames)))):
-        # Hidden segments keep their own cell position on the same closed route.
-        positions = ";".join(
-            f"{x},{y}" for x, y in (
-                cell_center(*frames[(step - segment) % steps][0])
-                for step in range(steps + 1)
-            )
-        )
-        visible = ";".join("1" if segment < len(frame) else "0" for frame in frames)
-        size = CELL if segment == 0 else CELL - 2
-        color = SNAKE_HEAD if segment == 0 else SNAKE_BODY
-        x, y = positions.split(";")[0].split(",")
-        svg.append(f'<g id="segment-{segment}" transform="translate({x},{y})" '
-                   f'opacity="{visible[0]}">')
-        svg.append(f'<animateTransform attributeName="transform" type="translate" '
-                   f'values="{positions}" keyTimes="{keytimes}" {motion_timing}/>')
-        svg.append(f'<animate attributeName="opacity" values="{visible}" '
-                   f'keyTimes="{keytimes}" {jump_timing}/>')
-        svg.append(f'<rect x="{-size / 2}" y="{-size / 2}" width="{size}" '
-                   f'height="{size}" rx="3" fill="{color}"/>')
-        if segment == 0:
-            svg.append(f'<circle cx="-2.5" cy="-2" r="1.5" fill="{BG}"/>')
-            svg.append(f'<circle cx="2.5" cy="-2" r="1.5" fill="{BG}"/>')
-        svg.append('</g>')
+    # Eaten cells: one mask stroke along the square route that is wiped up
+    # to the front of the head, instead of an animation per contribution.
+    heads = [frame[0] for frame in frames]
+    centers = [cell_center(*cell) for cell in heads]
+    trail = "M" + " L".join(f"{x:g},{y:g}" for x, y in centers)
+    wipe = ";".join(f"{k * PITCH + (CELL / 2 if k else 0):g} {steps * PITCH + 100}"
+                    for k in range(steps + 1))
+    svg.append(f'<mask id="eaten" maskUnits="userSpaceOnUse" x="0" y="0" '
+               f'width="{width}" height="{height}">')
+    svg.append(f'<rect width="{width}" height="{height}" fill="#fff"/>')
+    svg.append(f'<path d="{trail}" fill="none" stroke="#000" stroke-width="{CELL + 1}" '
+               f'stroke-linejoin="miter" stroke-linecap="butt" stroke-dasharray="0 {steps * PITCH + 100}">')
+    svg.append(f'<animate attributeName="stroke-dasharray" values="{wipe}" '
+               f'keyTimes="{keytimes}" calcMode="linear" {loop}/>')
+    svg.append('</path></mask>')
+    svg.append('<g mask="url(#eaten)">')
+    svg.extend(foods)
+    svg.append('</g>')
+
+    # Body: one stroke along the route. The dash covers tail..head; its
+    # offset and length are keyed per cell, so growth simply keeps the
+    # tail still for a step and shrinking lets it catch up, never a pop.
+    dash, offset = [], []
+    for k, frame in enumerate(frames):
+        head = cum[steps + k]
+        tail = cum[steps + k - (len(frame) - 1)]
+        dash.append(f"{head - tail:.2f} {full + 100:.0f}")
+        offset.append(f"{-tail:.2f}")
+    svg.append(f'<path id="route" d="{d}" fill="none" stroke="{SNAKE_BODY}" '
+               f'stroke-width="{BODY_W}" stroke-linecap="round" stroke-linejoin="round" '
+               f'stroke-dasharray="{dash[0]}" stroke-dashoffset="{offset[0]}">')
+    svg.append(f'<animate attributeName="stroke-dasharray" values="{";".join(dash)}" '
+               f'keyTimes="{keytimes}" calcMode="linear" {loop}/>')
+    svg.append(f'<animate attributeName="stroke-dashoffset" values="{";".join(offset)}" '
+               f'keyTimes="{keytimes}" calcMode="linear" {loop}/>')
+    svg.append('</path>')
+
+    # Head: one motion at constant speed over the second lap.
+    svg.append('<g id="head">')
+    svg.append(f'<animateMotion keyPoints="{lap0 / full:.6f};{lap1 / full:.6f}" '
+               f'keyTimes="0;1" calcMode="linear" rotate="auto" {loop}>'
+               '<mpath href="#route"/></animateMotion>')
+    svg.append(f'<rect x="{-CELL / 2:g}" y="{-CELL / 2:g}" width="{CELL}" height="{CELL}" '
+               f'rx="3.5" fill="{SNAKE_HEAD}"/>')
+    svg.append(f'<circle cx="2.5" cy="-2.5" r="1.5" fill="{BG}"/>')
+    svg.append(f'<circle cx="2.5" cy="2.5" r="1.5" fill="{BG}"/>')
+    svg.append('</g>')
     svg.append('</svg>')
     return "\n".join(svg)
 
